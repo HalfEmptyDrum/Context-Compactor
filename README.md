@@ -1,4 +1,4 @@
-# @openclaw/context-compact
+# context-compact
 
 LLM context window compactor — summarizes old conversation history to free up context space without losing continuity.
 
@@ -11,14 +11,14 @@ Long-running AI agent sessions accumulate thousands of messages. When the contex
 ## Install
 
 ```bash
-npm install @openclaw/context-compact
+npm install context-compact
 ```
 
 ## Quick Start — Anthropic SDK
 
 ```typescript
 import Anthropic from "@anthropic-ai/sdk";
-import { compactIfNeeded, type SummarizeFn } from "@openclaw/context-compact";
+import { compactIfNeeded, type SummarizeFn } from "context-compact";
 
 const client = new Anthropic();
 
@@ -55,7 +55,7 @@ conversationHistory = result.messages;
 
 ```typescript
 import OpenAI from "openai";
-import { compactIfNeeded, type SummarizeFn } from "@openclaw/context-compact";
+import { compactIfNeeded, type SummarizeFn } from "context-compact";
 
 const client = new OpenAI();
 
@@ -141,7 +141,7 @@ compactIfNeeded({
 Token counting without a tokenizer SDK uses a `chars / 4` heuristic. This underestimates for code and unicode text. The `safetyMargin` option (default: `1.2`) compensates by multiplying the estimate when making threshold decisions.
 
 ```typescript
-import { estimateTokens } from "@openclaw/context-compact";
+import { estimateTokens } from "context-compact";
 
 const tokens = estimateTokens(messages);
 // Use for budgeting, not exact billing

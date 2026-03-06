@@ -1,5 +1,5 @@
 {
-  "name": "@openclaw/context-compact",
+  "name": "context-compact",
   "version": "1.0.0",
   "description": "LLM context window compactor — summarizes old conversation history to free up context space",
   "type": "module",
