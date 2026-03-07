@@ -12,6 +12,7 @@ export function chunkByMaxTokens(
   messages: Message[],
   maxTokens: number,
   safetyMargin: number,
+  tokenCounter?: (text: string) => number,
 ): Message[][] {
   const effectiveMax = Math.floor(maxTokens / safetyMargin);
   if (effectiveMax <= 0) {
@@ -23,7 +24,7 @@ export function chunkByMaxTokens(
   let currentTokens = 0;
 
   for (const msg of messages) {
-    const msgTokens = estimateMessageTokens(msg);
+    const msgTokens = estimateMessageTokens(msg, tokenCounter);
 
     // Oversized single message gets its own chunk
     if (msgTokens > effectiveMax) {
@@ -59,12 +60,13 @@ export function chunkByMaxTokens(
 export function splitIntoEqualParts(
   messages: Message[],
   parts: number,
+  tokenCounter?: (text: string) => number,
 ): Message[][] {
   if (parts <= 1 || messages.length === 0) {
     return messages.length > 0 ? [messages] : [];
   }
 
-  const totalTokens = estimateTokens(messages);
+  const totalTokens = estimateTokens(messages, tokenCounter);
   const targetPerPart = Math.ceil(totalTokens / parts);
 
   const result: Message[][] = [];
@@ -72,7 +74,7 @@ export function splitIntoEqualParts(
   let currentTokens = 0;
 
   for (const msg of messages) {
-    const msgTokens = estimateMessageTokens(msg);
+    const msgTokens = estimateMessageTokens(msg, tokenCounter);
 
     if (
       currentTokens + msgTokens > targetPerPart &&
@@ -104,12 +106,13 @@ export function computeAdaptiveChunkRatio(
   messages: Message[],
   contextWindowTokens: number,
   safetyMargin: number = 1.2,
+  tokenCounter?: (text: string) => number,
 ): number {
   if (messages.length === 0 || contextWindowTokens <= 0) {
     return BASE_CHUNK_RATIO;
   }
 
-  const totalTokens = estimateTokens(messages);
+  const totalTokens = estimateTokens(messages, tokenCounter);
   const avgTokensPerMessage = totalTokens / messages.length;
   const avgRatio = (avgTokensPerMessage * safetyMargin) / contextWindowTokens;
 

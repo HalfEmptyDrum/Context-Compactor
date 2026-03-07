@@ -18,6 +18,38 @@ MUST PRESERVE:
 PRIORITIZE recent context over older history. The agent needs to know
 what it was doing, not just what was discussed.`;
 
+type InternalOptions = {
+  safetyMargin: number;
+  maxChunkTokens: number;
+  contextWindowTokens: number;
+  signal?: AbortSignal;
+  tokenCounter?: (text: string) => number;
+  stripFields?: string[];
+  retryAttempts: number;
+  retryMinDelayMs: number;
+  retryMaxDelayMs: number;
+  onProgress?: (stage: string, current: number, total: number) => void;
+};
+
+function resolveInternalOptions(
+  options: CompactionOptions & { contextWindowTokens: number },
+): InternalOptions {
+  return {
+    safetyMargin: options.safetyMargin ?? 1.2,
+    maxChunkTokens:
+      options.maxChunkTokens ??
+      Math.floor(options.contextWindowTokens * 0.4),
+    contextWindowTokens: options.contextWindowTokens,
+    signal: options.signal,
+    tokenCounter: options.tokenCounter,
+    stripFields: options.stripFields,
+    retryAttempts: options.retryAttempts ?? 3,
+    retryMinDelayMs: options.retryMinDelayMs ?? 500,
+    retryMaxDelayMs: options.retryMaxDelayMs ?? 5000,
+    onProgress: options.onProgress,
+  };
+}
+
 function buildInstructions(options: CompactionOptions): string {
   const parts: string[] = [
     "Summarize the following conversation history concisely. Focus on key decisions, outcomes, and context needed for continuity.",
@@ -44,21 +76,30 @@ async function summarizeChunks(
   messages: Message[],
   summarize: SummarizeFn,
   instructions: string,
-  maxChunkTokens: number,
-  safetyMargin: number,
-  signal?: AbortSignal,
+  opts: InternalOptions,
 ): Promise<string> {
-  const sanitized = stripToolResultDetails(messages);
-  const chunks = chunkByMaxTokens(sanitized, maxChunkTokens, safetyMargin);
+  const sanitized = stripToolResultDetails(messages, opts.stripFields);
+  const chunks = chunkByMaxTokens(
+    sanitized,
+    opts.maxChunkTokens,
+    opts.safetyMargin,
+    opts.tokenCounter,
+  );
 
   let summary: string | undefined;
 
-  for (const chunk of chunks) {
-    signal?.throwIfAborted();
+  for (let i = 0; i < chunks.length; i++) {
+    opts.signal?.throwIfAborted();
+    opts.onProgress?.("summarizing", i + 1, chunks.length);
 
     summary = await retryWithBackoff(
-      () => summarize(chunk, instructions, summary),
-      { attempts: 3, minDelayMs: 500, maxDelayMs: 5000, signal },
+      () => summarize(chunks[i], instructions, summary),
+      {
+        attempts: opts.retryAttempts,
+        minDelayMs: opts.retryMinDelayMs,
+        maxDelayMs: opts.retryMaxDelayMs,
+        signal: opts.signal,
+      },
     );
   }
 
@@ -72,34 +113,24 @@ async function summarizeWithFallback(
   messages: Message[],
   summarize: SummarizeFn,
   instructions: string,
-  maxChunkTokens: number,
-  safetyMargin: number,
-  contextWindowTokens: number,
-  signal?: AbortSignal,
+  opts: InternalOptions,
 ): Promise<string> {
   try {
-    return await summarizeChunks(
-      messages,
-      summarize,
-      instructions,
-      maxChunkTokens,
-      safetyMargin,
-      signal,
-    );
+    return await summarizeChunks(messages, summarize, instructions, opts);
   } catch (error) {
     // Re-throw abort errors — don't fall back on user cancellation
-    if (signal?.aborted) {
+    if (opts.signal?.aborted) {
       throw error;
     }
 
     // Progressive fallback: separate oversized messages
-    const oversizeThreshold = contextWindowTokens * 0.5;
+    const oversizeThreshold = opts.contextWindowTokens * 0.5;
 
     const smallMessages: Message[] = [];
     const oversizedNotes: string[] = [];
 
     for (const msg of messages) {
-      const tokens = estimateMessageTokens(msg);
+      const tokens = estimateMessageTokens(msg, opts.tokenCounter);
       if (tokens > oversizeThreshold) {
         const approxK = Math.round(tokens / 1000);
         oversizedNotes.push(
@@ -116,16 +147,14 @@ async function summarizeWithFallback(
           smallMessages,
           summarize,
           instructions,
-          maxChunkTokens,
-          safetyMargin,
-          signal,
+          opts,
         );
         if (oversizedNotes.length > 0) {
           return partial + "\n\n" + oversizedNotes.join("\n");
         }
         return partial;
       } catch (innerError) {
-        if (signal?.aborted) {
+        if (opts.signal?.aborted) {
           throw innerError;
         }
         // Fall through to final fallback
@@ -146,57 +175,34 @@ export async function summarizeInStages(
   summarize: SummarizeFn,
   options: CompactionOptions & { contextWindowTokens: number },
 ): Promise<string> {
-  const safetyMargin = options.safetyMargin ?? 1.2;
-  const maxChunkTokens = options.maxChunkTokens ?? Math.floor(options.contextWindowTokens * 0.4);
+  const opts = resolveInternalOptions(options);
   const parts = options.parts ?? 2;
-  const signal = options.signal;
-  const contextWindowTokens = options.contextWindowTokens;
 
   const instructions = buildInstructions(options);
-  const totalTokens = estimateTokens(messages);
+  const totalTokens = estimateTokens(messages, opts.tokenCounter);
 
-  if (parts <= 1 || totalTokens <= maxChunkTokens) {
-    return summarizeWithFallback(
-      messages,
-      summarize,
-      instructions,
-      maxChunkTokens,
-      safetyMargin,
-      contextWindowTokens,
-      signal,
-    );
+  if (parts <= 1 || totalTokens <= opts.maxChunkTokens) {
+    return summarizeWithFallback(messages, summarize, instructions, opts);
   }
 
-  const splits = splitIntoEqualParts(messages, parts).filter(
+  const splits = splitIntoEqualParts(messages, parts, opts.tokenCounter).filter(
     (c) => c.length > 0,
   );
 
   if (splits.length <= 1) {
-    return summarizeWithFallback(
-      messages,
-      summarize,
-      instructions,
-      maxChunkTokens,
-      safetyMargin,
-      contextWindowTokens,
-      signal,
-    );
+    return summarizeWithFallback(messages, summarize, instructions, opts);
   }
+
+  opts.onProgress?.("splitting", 0, splits.length);
 
   // Summarize each part in parallel
   const partialSummaries = await Promise.all(
     splits.map((s) =>
-      summarizeWithFallback(
-        s,
-        summarize,
-        instructions,
-        maxChunkTokens,
-        safetyMargin,
-        contextWindowTokens,
-        signal,
-      ),
+      summarizeWithFallback(s, summarize, instructions, opts),
     ),
   );
+
+  opts.onProgress?.("merging", 0, 1);
 
   // Merge partial summaries
   const mergeMessages: Message[] = partialSummaries.map((s) => ({
@@ -216,10 +222,7 @@ export async function summarizeInStages(
     mergeMessages,
     summarize,
     mergeInstructions.join("\n\n"),
-    maxChunkTokens,
-    safetyMargin,
-    contextWindowTokens,
-    signal,
+    opts,
   );
 }
 

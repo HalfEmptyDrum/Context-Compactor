@@ -13,6 +13,8 @@ export type ContentBlock = {
 export type Message = {
   role: "user" | "assistant" | "system" | "tool";
   content: string | ContentBlock[];
+  /** Metadata added by the library (e.g., synthetic summary messages). */
+  _meta?: { synthetic?: boolean; [key: string]: unknown };
   [key: string]: unknown;
 };
 
@@ -69,6 +71,31 @@ export type CompactionOptions = {
 
   /** AbortSignal passed through to summarize calls */
   signal?: AbortSignal;
+
+  /**
+   * Optional custom token counter. When provided, used instead of the
+   * built-in chars/4 heuristic. Supply tiktoken or @anthropic-ai/tokenizer
+   * for accurate counts.
+   */
+  tokenCounter?: (text: string) => number;
+
+  /**
+   * Additional field names to strip from tool_result blocks during summarization.
+   * Default strip list: details, raw_response, stderr, debug_info, raw_output.
+   */
+  stripFields?: string[];
+
+  /** Number of retry attempts for summarization calls (default: 3). */
+  retryAttempts?: number;
+
+  /** Minimum delay in ms for retry backoff (default: 500). */
+  retryMinDelayMs?: number;
+
+  /** Maximum delay in ms for retry backoff (default: 5000). */
+  retryMaxDelayMs?: number;
+
+  /** Called to report compaction progress. */
+  onProgress?: (stage: string, current: number, total: number) => void;
 };
 
 /**
@@ -87,5 +114,18 @@ export type CompactResult = {
     tokensAfter: number;
     messagesCompressed: number;
     messagesKept: number;
+    droppedOrphanResults?: number;
+    droppedOrphanUses?: number;
   };
+};
+
+/**
+ * Result of shouldCompact() — stats without running compaction.
+ */
+export type CompactStats = {
+  shouldCompact: boolean;
+  estimatedTokens: number;
+  threshold: number;
+  messagesTotal: number;
+  estimatedKeepFrom: number;
 };

@@ -1,4 +1,4 @@
-export { compactIfNeeded, compact } from "./compact.js";
+export { compactIfNeeded, compact, shouldCompact } from "./compact.js";
 export { estimateTokens } from "./tokens.js";
 export { repairToolPairing } from "./repair.js";
 
@@ -8,4 +8,5 @@ export type {
   SummarizeFn,
   CompactionOptions,
   CompactResult,
+  CompactStats,
 } from "./types.js";

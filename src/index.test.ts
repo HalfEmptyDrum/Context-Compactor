@@ -164,11 +164,12 @@ describe("compact", () => {
       toSummarize,
       toKeep,
       summarize: mockSummarize,
+      contextWindowTokens: 128000,
     });
 
     expect(result.compacted).toBe(true);
     expect(result.messages.length).toBe(3); // summary + 2 kept
-    expect(result.messages[0].role).toBe("user");
+    expect(result.messages[0].role).toBe("assistant"); // assistant to avoid consecutive user messages
     expect(result.messages[0].content).toContain("[Previous conversation summary]");
     expect(result.messages[0].content).toContain("Summary of 2 messages");
     expect(result.messages[1]).toEqual(toKeep[0]);
@@ -186,6 +187,7 @@ describe("compact", () => {
       toSummarize,
       toKeep,
       summarize: mockSummarize,
+      contextWindowTokens: 128000,
     });
 
     expect(result.stats.messagesCompressed).toBe(2);
@@ -283,6 +285,8 @@ describe("fallback", () => {
       toSummarize: messages,
       toKeep: [msg("assistant", "recent")],
       summarize: failingSummarize,
+      contextWindowTokens: 128000,
+      options: { retryAttempts: 1 }, // minimize retry delay in tests
     });
 
     expect(result.compacted).toBe(true);
@@ -461,6 +465,7 @@ describe("security", () => {
       toSummarize,
       toKeep: [msg("assistant", "kept")],
       summarize: capturingSummarize,
+      contextWindowTokens: 128000,
     });
 
     // The captured messages should not have details
